@@ -134,6 +134,14 @@ export class PullstateAsyncError extends Error {
   }
 }
 
+type TGlobalListener = (actionKey: string, result: TAsyncActionResult<any, string>) => void;
+
+const asyncActionGlobalListeners: TGlobalListener[] = [];
+
+export function registerAsyncActionGlobalListener(listener: TGlobalListener) {
+
+}
+
 export function createAsyncAction<
   A = any,
   R = any,
