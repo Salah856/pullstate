@@ -159,7 +159,11 @@ If this error occurred on the client:
   storeErrorProxy = {};
 }
 
-export function createAsyncActionDirect<A = any, R = any, S extends IPullstateAllStores = IPullstateAllStores>(
+export function createAsyncActionDirect<
+  A extends any = any,
+  R extends any = any,
+  S extends IPullstateAllStores = IPullstateAllStores
+>(
   action: (args: A) => Promise<R>,
   options: ICreateAsyncActionOptions<A, R, string, S> = {}
 ): IOCreateAsyncActionOutput<A, R> {
@@ -185,6 +189,9 @@ export function createAsyncAction<
 ): IOCreateAsyncActionOutput<A, R, T> {
   const ordinal: number = asyncCreationOrdinal++;
   const onServer: boolean = typeof window === "undefined";
+  let executingActions: {
+    [key: string]: Promise<TAsyncActionResult<R, T>>;
+  } = {};
 
   function _createKey(args: A, customKey: string | undefined) {
     if (customKey) {
@@ -278,8 +285,8 @@ further looping. Fix in your cacheBreakHook() is needed.`);
     postActionEnabled: boolean,
     context: EPostActionContext
   ): () => Promise<TAsyncActionResult<R, T>> {
-    return () =>
-      action(args, stores)
+    return () => {
+      executingActions[key] = action(args, stores)
         .then(resp => {
           if (currentActionOrd === cache.actionOrd[key]) {
             if (postActionEnabled) {
@@ -311,6 +318,7 @@ further looping. Fix in your cacheBreakHook() is needed.`);
         })
         .then(resp => {
           if (currentActionOrd === cache.actionOrd[key]) {
+            delete executingActions[key];
             delete cache.actions[key];
             if (!onServer) {
               notifyListeners(key);
@@ -318,6 +326,9 @@ further looping. Fix in your cacheBreakHook() is needed.`);
           }
           return resp;
         });
+
+      return executingActions[key];
+    }
   }
 
   function checkKeyAndReturnResponse(
@@ -750,20 +761,30 @@ further looping. Fix in your cacheBreakHook() is needed.`);
       ];
     }
 
-    let currentActionOrd = actionOrdUpdate(_asyncCache, key);
-    _asyncCache.actions[key] = createInternalAction(
-      key,
-      _asyncCache,
-      args,
-      _stores,
-      currentActionOrd,
-      true,
-      EPostActionContext.DIRECT_RUN
-    );
+    let action: Promise<TAsyncActionResult<R, T>>;
 
+    if (!respectCache || !_asyncCache.actions.hasOwnProperty(key)) {
+      const currentActionOrd = actionOrdUpdate(_asyncCache, key);
+
+      _asyncCache.actions[key] = createInternalAction(
+        key,
+        _asyncCache,
+        args,
+        _stores,
+        currentActionOrd,
+        true,
+        EPostActionContext.DIRECT_RUN
+      );
+
+      action = _asyncCache.actions[key]() as Promise<TAsyncActionResult<R, T>>;
+    } else {
+      action = executingActions[key];
+    }
+    // let currentActionOrd = actionOrdUpdate(_asyncCache, key);
     notifyListeners(key);
 
-    return _asyncCache.actions[key]() as Promise<TAsyncActionResult<R, T>>;
+    return action;
+    // return _asyncCache.actions[key]() as Promise<TAsyncActionResult<R, T>>;
   };
 
   const clearCache: TAsyncActionClearCache<A> = (args = {} as A, customKey?: string) => {
@@ -976,7 +997,7 @@ further looping. Fix in your cacheBreakHook() is needed.`);
       renderPayload,
       message: result.message,
       raw,
-      execute: (runOptions => run(args, runOptions)),
+      execute: runOptions => run(args, runOptions),
     } as TUseResponse<R, T>;
   };
 
